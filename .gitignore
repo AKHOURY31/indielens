@@ -8,6 +8,7 @@ data/raw/*
 !data/raw/.gitkeep
 reports/*
 !reports/.gitkeep
+!reports/*.md
 .env
 .env.*
 !.env.example
