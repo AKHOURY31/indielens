@@ -17,14 +17,23 @@ def main():
     if not args.data.exists():
         parser.error(f"Dataset missing: {args.data}. See README for download instructions.")
     interactions = load_steam200k(args.data)
-    train, test = split_leave_one_out(interactions)
+
+    train_validation, test = split_leave_one_out(interactions, seed=42)
+    train, validation = split_leave_one_out(train_validation, seed=43)
     model = PopularityRecommender().fit(train)
     #:, formats the number with thousands separators: 12345 becomes 12,345.
     print(f"Unique users: {interactions.user_id.nunique():,}")
     print(f"Unique games: {interactions.game.nunique():,}")
     print(f"User-game interactions: {len(interactions):,}")
-    print(f"Train interactions: {len(train):,}; test interactions: {len(test):,}")
-    print(f"Popularity Recall@{args.top_k}: {recall_at_k(model, test, args.top_k):.4f}")
+    print(
+        f"Train interactions: {len(train):,}; "
+        f"validation interactions: {len(validation):,}; "
+        f"test interactions: {len(test):,}"
+    )
+    print(
+        f"Popularity Validation Recall@{args.top_k}: "
+        f"{recall_at_k(model, validation, args.top_k):.4f}"
+    )
     '''
     Selects a user for an example:
     1. train.user_id gets the user ID column.

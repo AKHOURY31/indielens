@@ -38,11 +38,15 @@ def split_leave_one_out(interactions: pd.DataFrame, seed: int = 42):
 
 def recall_at_k(model, test: pd.DataFrame, k: int = 10) -> float:
     '''
-    This function measures the model's success
-    It takes:
-        model: a recommender already fitted on train
-        test: the hidden interactions
-        k: how many recommendations to check, defaulting to 10
+    This function measures the model's success.
+
+    Parameters:
+        model (model): A recommender already fitted on train.
+        test (Datafame) : Hidden interactions.
+        k (int, default = 10): Number of recommendations to check.
+
+    Returns:
+        float: Ratio of successful recommendation/ total number of tests.
     '''
     if test.empty:
         return float("nan")
