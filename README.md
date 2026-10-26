@@ -30,6 +30,17 @@ python -m indielens.cli --data data/raw/steam-200k.csv --top-k 10
 
 The repository deliberately does not redistribute external data.
 
+To inspect item-similarity recommendations alongside training histories and hidden
+validation games, run:
+
+```powershell
+python -m indielens.cli --data data/raw/steam-200k.csv --top-k 10 --inspect
+```
+
+Inspection selects users at the 25th, 50th, and 75th percentiles of training-history
+length among validation users, without selecting by recommendation success.
+Histories show at most 20 titles. The reserved test set is not evaluated.
+
 ### Data rules
 
 - Dataset columns: `user_id, game, behavior, value, unused` (no header).

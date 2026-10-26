@@ -150,3 +150,56 @@ def test_item_similarity_builds_binary_user_game_matrix():
         model.interaction_matrix.toarray(),
         [[1, 1, 0], [1, 1, 1], [0, 0, 1]],
     )
+
+
+def test_item_similarity_cosine_known_values():
+    # A and B have identical audiences; C shares one of their two players.
+    # D has no players in common with any other game.
+    interactions = pd.DataFrame({
+        "user_id": ["1", "1", "2", "2", "2", "3", "4"],
+        "game": ["A", "B", "A", "B", "C", "C", "D"],
+    })
+
+    model = ItemSimilarityRecommender().fit(interactions)
+
+    assert list(model.games) == ["A", "B", "C", "D"]
+    assert isspmatrix_csr(model.similarity_matrix)
+    np.testing.assert_allclose(
+        model.similarity_matrix.toarray(),
+        [
+            [0, 1, 0.5, 0],
+            [1, 0, 0.5, 0],
+            [0.5, 0.5, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        rtol=1e-6,
+        atol=1e-7,
+    )
+
+
+def test_item_recommendations_rank_unseen_games_and_use_fallback():
+    interactions = pd.DataFrame({
+        "user_id": ["target", "target", "u", "u", "v", "v", "w", "w", "loner"],
+        "game": ["A", "B", "A", "C", "B", "C", "A", "D", "E"],
+    })
+    model = ItemSimilarityRecommender().fit(interactions)
+
+    # C is related to both A and B (C = 1 iff (A = 1 OR B = 1)); D only to A. E has no shared players.
+    assert model.recommend("target", k=1) == ["C"]
+    assert model.recommend("target", k=10) == ["C", "D", "E"]
+    # No similarity signal for the loner: use popularity, excluding their E.
+    assert model.recommend("loner", k=10) == ["A", "B", "C", "D"]
+    assert model.recommend("unknown", k=3) == ["A", "B", "C"]
+
+    # To make sure that we correclty catch the error in recommend
+    with pytest.raises(ValueError, match="k must be positive"):
+        model.recommend("target", k=0)
+
+
+def test_item_recommendations_when_every_game_is_seen():
+    model = ItemSimilarityRecommender().fit(pd.DataFrame({
+        "user_id": ["1", "1"],
+        "game": ["A", "B"],
+    }))
+    assert model.recommend("1", k=10) == []
+    assert model.recommend(1, k=10) == []
