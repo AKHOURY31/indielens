@@ -3,7 +3,9 @@ import pandas as pd
 import pytest
 from scipy.sparse import isspmatrix_csr
 from indielens.data import load_steam200k
-from indielens.model import PopularityRecommender, ItemSimilarityRecommender
+from indielens.model import (
+    PopularityRecommender, ItemSimilarityRecommender, ImplicitALSRecommender,
+)
 from indielens.evaluation import split_leave_one_out, recall_at_k
 
 
@@ -203,3 +205,79 @@ def test_item_recommendations_when_every_game_is_seen():
     }))
     assert model.recommend("1", k=10) == []
     assert model.recommend(1, k=10) == []
+
+
+def test_als_learns_user_and_game_vectors():
+    interactions = pd.DataFrame({
+        "user_id": ["2", "1", "3", "1", "2", "3", "2"],
+        "game": ["B", "A", "D", "B", "C", "C", "B"],
+    })
+    model = ImplicitALSRecommender(factors=2, iterations=20).fit(interactions)
+
+    assert model.user_to_index == {"1": 0, "2": 1, "3": 2}
+    assert model.game_to_index == {"A": 0, "B": 1, "C": 2, "D": 3}
+    assert isspmatrix_csr(model.interaction_matrix)
+    expected = np.array([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+    np.testing.assert_array_equal(model.interaction_matrix.toarray(), expected)
+    assert model.user_factors.shape == (3, 2)
+    assert model.item_factors.shape == (4, 2)
+    assert np.isfinite(model.user_factors).all()
+    assert np.isfinite(model.item_factors).all()
+
+    # Learned scores should explain the toy interactions better than all zeros.
+    scores = model.user_factors @ model.item_factors.T
+    confidence = np.where(expected == 1, model.alpha, 1) # Will test every cell in expected
+    '''expected - scores: calculate each prediction error.
+    ** 2: square each error so positive and negative differences don't cancel.
+    confidence * ...: give observed interactions more weight.
+    np.sum(...): add all the weighted errors.'''
+
+    learned_error = np.sum(confidence * (expected - scores) ** 2)
+
+    '''Calculates the error of a simple reference model that predicts zero for everything.
+    Because its predictions are zero: (expected - 0)² = expected²'''
+    zero_score_error = np.sum(confidence * expected ** 2)
+    assert learned_error < zero_score_error
+
+    # Same seed reproduces training; refitting starts fresh rather than continuing.
+    # Recalculates the scores and checks that they match the saved ones, allowing tiny numerical differences.
+    original_scores = scores.copy()
+    model.fit(interactions)
+    np.testing.assert_allclose(
+        model.user_factors @ model.item_factors.T, original_scores,
+        rtol=1e-5, atol=1e-6,
+    )
+
+
+def test_als_rejects_empty_training_data():
+    with pytest.raises(ValueError, match="training interactions must not be empty"):
+        ImplicitALSRecommender().fit(pd.DataFrame(columns=["user_id", "game"]))
+
+
+def test_als_recommendations_use_dot_products_and_exclude_seen():
+    model = ImplicitALSRecommender(factors=2, iterations=2).fit(pd.DataFrame({
+        "user_id": ["1", "2", "2", "2"],
+        "game": ["A", "B", "C", "D"],
+    }))
+    # Fixed vectors isolate recommendation logic from the training algorithm.
+    model.user_factors = np.array([[1.0, 0.0], [0.0, 1.0]])
+    model.item_factors = np.array([
+        [100.0, 0.0],  # A: highest score, but already seen by user 1.
+        [-2.0, 0.0],   # B: a negative score remains eligible.
+        [-1.0, 0.0],   # C and D tie: alphabetical order wins.
+        [-1.0, 0.0],
+    ])
+    assert model.recommend("1", k=10) == ["C", "D", "B"]
+    assert model.recommend(1, k=1) == ["C"]
+    assert model.recommend("2", k=10) == ["A"]
+    assert model.recommend("unknown", k=2) == ["A", "B"]
+    with pytest.raises(ValueError, match="k must be positive"):
+        model.recommend("1", k=0)
+
+
+def test_als_recommendations_when_every_game_is_seen():
+    model = ImplicitALSRecommender(factors=2, iterations=2).fit(pd.DataFrame({
+        "user_id": ["1", "1"],
+        "game": ["A", "B"],
+    }))
+    assert model.recommend("1", k=10) == []

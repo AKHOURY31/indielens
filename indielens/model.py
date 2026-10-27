@@ -1,8 +1,10 @@
 """Popularity baseline and item-based collaborative filtering."""
 import numpy as np
 import pandas as pd
+from implicit.cpu.als import AlternatingLeastSquares
 from scipy.sparse import csr_matrix
 from sklearn.metrics.pairwise import cosine_similarity
+from threadpoolctl import threadpool_limits
 
 
 class PopularityRecommender:
@@ -120,3 +122,85 @@ class ItemSimilarityRecommender:
                     if len(recommendations) == k:
                         break
         return recommendations
+
+
+class ImplicitALSRecommender:
+    """Learn user/game vectors from binary training interactions using CPU ALS.
+
+    alpha is the confidence for observed pairs; missing pairs have confidence 1.
+    """
+
+    def __init__(
+        self, factors=32, regularization=0.1, iterations=20,
+        random_state=42, alpha=10.0,
+    ):
+        if factors < 1 or iterations < 1:
+            raise ValueError("factors and iterations must be positive")
+        if regularization <= 0 or alpha <= 0:
+            raise ValueError("regularization and alpha must be positive")
+        self.factors = factors
+        self.regularization = regularization
+        self.iterations = iterations
+        self.random_state = random_state
+        self.alpha = alpha
+
+    def fit(self, interactions: pd.DataFrame):
+        if interactions.empty:
+            raise ValueError("training interactions must not be empty")
+
+        # Use the same binary representation and ordering as item similarity.
+        pairs = interactions[["user_id", "game"]].copy()
+        pairs["user_id"] = pairs["user_id"].astype(str)
+        pairs = pairs.drop_duplicates()
+        user_rows, self.users = pd.factorize(pairs["user_id"], sort=True)
+        game_columns, self.games = pd.factorize(pairs["game"], sort=True)
+        self.user_to_index = {
+            user_id: index for index, user_id in enumerate(self.users)
+        }
+        self.game_to_index = {
+            game: index for index, game in enumerate(self.games)
+        }
+        self.interaction_matrix = csr_matrix(
+            (np.ones(len(pairs), dtype=np.float32), (user_rows, game_columns)),
+            shape=(len(self.users), len(self.games)),
+        )
+
+        # Create a fresh model on each fit so previous factors are not reused.
+        # Limit BLAS threads during fitting, as recommended by implicit.
+        with threadpool_limits(limits=1, user_api="blas"):
+            self.als = AlternatingLeastSquares(
+                factors=self.factors,
+                regularization=self.regularization,
+                iterations=self.iterations,
+                random_state=self.random_state,
+                alpha=self.alpha,
+                num_threads=1,
+            )
+            # Unlike cosine similarity, ALS expects users x games: no transpose.
+            self.als.fit(self.interaction_matrix, show_progress=False)
+        self.user_factors = self.als.user_factors
+        self.item_factors = self.als.item_factors
+        self.popularity_fallback = PopularityRecommender().fit(pairs)
+        return self
+
+    def recommend(self, user_id: str, k: int = 10) -> list[str]:
+        """Rank unseen games by dot product with the learned user vector."""
+        if k < 1:
+            raise ValueError("k must be positive")
+        user_id = str(user_id)
+        user_index = self.user_to_index.get(user_id)
+        if user_index is None:
+            return self.popularity_fallback.recommend(user_id, k)
+
+        # A NumPy array with shape (2,) like self.user_factors[user_index] is one-dimensional, 
+        # so it isn’t explicitly a row or column vector. 
+        # NumPy handles its role according to which side of @ it appears on.
+        scores = self.item_factors @ self.user_factors[user_index]
+        history = self.interaction_matrix.getrow(user_index)
+        scores[history.indices] = -np.inf
+
+        # Negative ALS scores are valid. Exclude non-finite scores (seen games).
+        candidates = np.flatnonzero(np.isfinite(scores))
+        # Stable sorting resolves score ties alphabetically, as in item similarity.
+        ranked_indices = candidates[np.argsort(-scores[candidates], kind="stable")]
+        return [self.games[index] for index in ranked_indices[:k]]

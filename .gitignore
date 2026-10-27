@@ -9,6 +9,7 @@ data/raw/*
 reports/*
 !reports/.gitkeep
 !reports/*.md
+!reports/experiment-003-results.csv
 .env
 .env.*
 !.env.example

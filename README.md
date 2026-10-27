@@ -30,16 +30,17 @@ python -m indielens.cli --data data/raw/steam-200k.csv --top-k 10
 
 The repository deliberately does not redistribute external data.
 
-To inspect item-similarity recommendations alongside training histories and hidden
-validation games, run:
+To compare item-similarity and selected ALS recommendations for the same users,
+alongside training histories and hidden validation games, run:
 
 ```powershell
-python -m indielens.cli --data data/raw/steam-200k.csv --top-k 10 --inspect
+.\.venv\Scripts\python.exe -m indielens.cli --data data/raw/steam-200k.csv --top-k 10 --inspect
 ```
 
 Inspection selects users at the 25th, 50th, and 75th percentiles of training-history
 length among validation users, without selecting by recommendation success.
-Histories show at most 20 titles. The reserved test set is not evaluated.
+Histories show at most 20 titles. Each model shows its own ranked recommendations
+and validation hit or miss. The reserved test set is not evaluated.
 
 ### Data rules
 
@@ -74,3 +75,18 @@ Histories show at most 20 titles. The reserved test set is not evaluated.
 ### First experiment notes
 
 After running the CLI, record dataset dimensions, Recall@10, limitations, and at least three possible improvements in `reports/experiment-001.md`. Keep measured numbers here, not invented numbers.
+
+### ALS validation tuning
+
+Run the six planned combinations of factors (16, 32, 64) and observed-interaction
+confidence alpha (1, 10), keeping regularization(= 0.1), iterations(= 20), and seeds(= 42) fixed:
+
+```powershell
+.\.venv\Scripts\python.exe -m indielens.tune_als
+```
+
+Results are saved after each configuration to `reports/experiment-003-results.csv`.
+See `reports/experiment-003.md` for the measured comparison. The reserved test set
+is not scored. The main CLI uses the selected ALS settings (64 factors, alpha 10),
+which achieved validation Recall@10 of 0.4050. The class default remains 32 factors;
+the CLI explicitly overrides it.
